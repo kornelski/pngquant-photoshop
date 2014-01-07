@@ -37,49 +37,43 @@
 //
 // ------------------------------------------------------------------------
 
-#ifndef pngquant_UI_H
-#define pngquant_UI_H
+#include "pngquant_UI.h"
 
-typedef struct {
-	int					quality;
-	bool				save_metadata;
-} pngquant_OutUI_Data;
-
-// pngquant UI
-//
-// return true if user hit OK
-// if user hit OK, params block will have been modified
-//
-// plugHndl is bundle identifier string on Mac, hInstance on win
-// mwnd is the main window for Windows
+#import "pngquant_About_Controller.h"
 
 
-bool
-pngquant_OutUI(
-	pngquant_OutUI_Data		*params,
-	bool				have_transparency,
-	const char			*alpha_name,
-	const void			*plugHndl,
-	const void			*mwnd);
+// ==========
+// Only building this on 64-bit (Cocoa) architectures
+// ==========
+#if __LP64__
+
+
+void MyLog(const char *str) {
+    NSLog(@"%s", str);
+}
 
 void
 pngquant_About(
 	const char		*pngquant_version_string,
 	const void		*plugHndl,
-	const void		*mwnd);
+	const void		*mwnd)
+{
 
-void MyLog(const char *str);
+		pngquant_About_Controller *about_controller = [[pngquant_About_Controller alloc] init:pngquant_version_string];
 
-// Mac prefs keys
-#define pngquant_PREFS_ID		"org.pngquant.photoshop"
-#define pngquant_PREFS_AUTO		"Auto"
+		if(about_controller)
+		{
+			NSWindow *the_window = [about_controller getWindow];
 
+			if(the_window)
+			{
+				[NSApp runModalForWindow:the_window];
 
-// Windows registry keys
-#define pngquant_PREFIX		 "Software\\pngquant\\photoshopplugin"
-#define pngquant_ALPHA_KEY	"Alpha"
-#define pngquant_MULT_KEY	"Mult"
-#define pngquant_AUTO_KEY	"Auto"
+				[the_window close];
+			}  
 
+			[about_controller release];
+		}
+}
 
-#endif // pngquant_UI_H
+#endif // __LP64__

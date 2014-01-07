@@ -31,9 +31,10 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
@@ -41,14 +42,14 @@
 //	Definitions -- Required by include files.
 //-------------------------------------------------------------------------------
 
-#include "WebP_version.h"
+#include "pngquant_version.h"
 
-#define plugInName			"WebP"
-#define plugInCopyrightYear	WebP_Copyright_Year
-#define plugInDescription WebP_Description
-#define VersionString 	WebP_Version_String
-#define ReleaseString	WebP_Build_Date_Manual
-#define CurrentYear		WebP_Build_Year
+#define plugInName			"pngquant"
+#define plugInCopyrightYear	pngquant_Copyright_Year
+#define plugInDescription pngquant_Description
+#define VersionString 	pngquant_Version_String
+#define ReleaseString	pngquant_Build_Date_Manual
+#define CurrentYear		pngquant_Build_Year
 
 //-------------------------------------------------------------------------------
 //	Definitions -- Required by other resources in this rez file.
@@ -56,11 +57,11 @@
 
 // Dictionary (aete) resources:
 
-#define vendorName			"fnord"
-#define plugInAETEComment 	WebP_Description
+#define plugInAETEComment 	pngquant_Description
+#define vendorName			"pngquant.org"
 
 #define plugInSuiteID		'sdK4'
-#define plugInClassID		'WebP'
+#define plugInClassID		'pngq'
 #define plugInEventID		typeNull // must be this
 
 //-------------------------------------------------------------------------------
@@ -70,8 +71,7 @@
 #include "PIDefines.h"
 
 #ifdef __PIMac__
-	#include "Types.r"
-	#include "SysTypes.r"
+//	#include "SysTypes.r"
 	#include "PIGeneral.r"
 	//#include "PIUtilities.r"
 	//#include "DialogUtilities.r"
@@ -88,19 +88,19 @@
 #include "PITerminology.h"
 #include "PIActions.h"
 
-#include "WebP_Terminology.h"
+#include "pngquant_Terminology.h"
 
 //-------------------------------------------------------------------------------
 //	PiPL resource
 //-------------------------------------------------------------------------------
 
-resource 'PiPL' (ResourceID, plugInName " PiPL", purgeable)
+resource 'PiPL' (ResourceID, plugInName "PiPL", purgeable)
 {
     {
 		Kind { ImageFormat },
-		Name { plugInName },
+		Name { "PNG for Web (pngquant)" },
 
-		//Category { "WebP" },
+		//Category { "pngquant" },
 		//Priority { 1 }, // Can use this to override a built-in Photoshop plug-in
 
 		Version { (latestFormatVersion << 16) | latestFormatSubVersion },
@@ -112,15 +112,6 @@ resource 'PiPL' (ResourceID, plugInName " PiPL", purgeable)
 				#endif
 				#if (defined(__i386__))
 					CodeMacIntel32 { "PluginMain" },
-				#endif
-				#if (defined(__ppc__))
-					CodeMachOPowerPC { 0, 0, "PluginMain" },
-				#endif
-			#else
-				#if TARGET_CARBON
-			        CodeCarbonPowerPC { 0, 0, "" },
-			    #else
-					CodePowerPC { 0, 0, "" },
 				#endif
 			#endif
 		#else
@@ -136,7 +127,7 @@ resource 'PiPL' (ResourceID, plugInName " PiPL", purgeable)
 
 		SupportedModes
 		{
-			noBitmap, noGrayScale,
+			noBitmap, noGrayScale, 
 			noIndexedColor, doesSupportRGBColor,
 			noCMYKColor, noHSLColor,
 			noHSBColor, noMultichannel,
@@ -145,13 +136,11 @@ resource 'PiPL' (ResourceID, plugInName " PiPL", purgeable)
 
 		EnableInfo { "in (PSHOP_ImageMode, RGBMode)" },
 
-		FmtFileType { 'WebP', '8BIM' },
-		ReadTypes { { 'WebP', '    ' } },
-		ReadExtensions { { 'webp' } },
-		WriteExtensions { { 'webp' } },
-		FilteredExtensions { { 'webp' } },
+		FmtFileType { 'PNGf', '8BIM' },
+		WriteExtensions { { 'PNG ' } },
+		FilteredExtensions { { 'PNG ' } },
 		FormatFlags { fmtSavesImageResources, //(by saying we do, PS won't store them, thereby avoiding problems)
-		              fmtCanRead,
+		              fmtCannotRead,
 					  fmtCanWrite,
 					  fmtCanWriteIfRead,
 					  fmtCanWriteTransparency,
@@ -160,9 +149,9 @@ resource 'PiPL' (ResourceID, plugInName " PiPL", purgeable)
 		FormatMaxSize { { 16384, 16384 } },
 		FormatMaxChannels { {   0, 0, 0, 5, 0, 0,
 							   0, 0, 0, 0, 0, 0 } },
-		FormatICCFlags { 	iccCanEmbedGray,
-							iccCanEmbedIndexed,
-							iccCanEmbedRGB,
+		FormatICCFlags { 	iccCannotEmbedGray,
+							iccCannotEmbedIndexed,
+							iccCannotEmbedRGB,
 							iccCannotEmbedCMYK },
 		XMPWrite { },
 		XMPRead { }
@@ -185,7 +174,7 @@ resource 'PiMI' (ResourceID, plugInName " PiMI", purgeable)
 	'    ',						/* Required host */
 
 	{
-		canRead,
+		cannotRead,
 		cannotReadAll,
 		canWrite,
 		canWriteIfRead,
@@ -196,7 +185,7 @@ resource 'PiMI' (ResourceID, plugInName " PiMI", purgeable)
 		   0,  0,  0,  0 },
 		32767,				/* Maximum rows allowed in document */
 		32767,				/* Maximum columns allowed in document */
-		'WebM',				/* The file type if we create a file. */
+		'PNGf',				/* The file type if we create a file. */
 		'8BIM',				/* The creator type if we create a file. */
 		{					/* The type-creator pairs supported. */
 			'8B1F', '    '
@@ -216,13 +205,13 @@ resource 'aete' (ResourceID, plugInName " dictionary", purgeable)
 	1, 0, english, roman,									/* aete version and language specifiers */
 	{
 		vendorName,											/* vendor suite name */
-		"WebP format",							/* optional description */
+		"Lossy PNG opd",							            /* optional description */
 		plugInSuiteID,										/* suite ID */
 		1,													/* suite code, must be 1 */
 		1,													/* suite level, must be 1 */
 		{},													/* structure for filters */
 		{													/* non-filter plug-in class here */
-			"WebP",										/* unique class name */
+			"pngquant cl",										/* unique class name */
 			plugInClassID,									/* class ID, must be unique or Suite ID */
 			plugInAETEComment,								/* optional description */
 			{												/* define inheritance */
@@ -232,38 +221,14 @@ resource 'aete' (ResourceID, plugInName " dictionary", purgeable)
 				"parent class format",						/* optional description */
 				flagsSingleProperty,						/* if properties, list below */
 
-				"Lossless",
-				keyWebPlossless,
-				typeBoolean,
-				"WebP lossless compression used",
-				flagsSingleProperty,
-
 				"Quality",
-				keyWebPquality,
+				keypngquantquality,
 				typeInteger,
-				"WebP compression quality",
+				"pngquant compression quality",
 				flagsSingleProperty,
 
-				"Alpha Channel",
-				keyWebPalpha,
-				typeEnumerated,
-				"Source of the alpha channel",
-				flagsSingleProperty,
-
-				"Lossy Alpha",
-				keyWebPlossyAlpha,
-				typeBoolean,
-				"Compress with lossy alpha channel",
-				flagsSingleProperty,
-
-				"Alpha Cleanup",
-				keyWebPalphaCleanup,
-				typeBoolean,
-				"Clean transparent areas of alpha channel",
-				flagsSingleProperty,
-
-				"Save Metadata",
-				keyWebPsaveMetadata,
+                "Save Metadata",
+				keypngquantsaveMetadata,
 				typeBoolean,
 				"Save ICC profile, EXIF, and XMP",
 				flagsSingleProperty
@@ -273,20 +238,6 @@ resource 'aete' (ResourceID, plugInName " dictionary", purgeable)
 		},
 		{}, /* comparison ops (not supported) */
 		{	/* any enumerations */
-			typeAlphaChannel,
-			{
-                "None",
-                alphaChannelNone,
-                "No alpha channel",
-
-                "Transparency",
-                alphaChannelTransparency,
-                "Get alpha from Transparency",
-
-                "Channel",
-                alphaChannelChannel,
-                "Get alpha from channels palette"
-			}
 		}
 	}
 };
@@ -301,7 +252,7 @@ resource 'vers' (1, plugInName " Version", purgeable)
 {
 	5, 0x50, final, 0, verUs,
 	VersionString,
-	VersionString " ©" plugInCopyrightYear " fnord"
+	VersionString " ©" plugInCopyrightYear " Kornel Lesinski, fnord"
 };
 
 resource 'vers' (2, plugInName " Version", purgeable)

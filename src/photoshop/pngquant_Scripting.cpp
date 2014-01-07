@@ -30,38 +30,29 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
 #include "PIDefines.h"
-#include "WebP.h"
+#include "pngquant.h"
 
-#include "WebP_Terminology.h"
+#include "pngquant_Terminology.h"
 
-
-static WebP_Alpha KeyToAlpha(OSType key)
-{
-	return	(key == alphaChannelNone)			? WEBP_ALPHA_NONE :
-			(key == alphaChannelTransparency)	? WEBP_ALPHA_TRANSPARENCY :
-			(key == alphaChannelChannel)		? WEBP_ALPHA_CHANNEL :
-			WEBP_ALPHA_TRANSPARENCY;
-}
 
 Boolean ReadScriptParamsOnWrite(GPtr globals)
 {
 	PIReadDescriptor			token = NULL;
 	DescriptorKeyID				key = 0;
 	DescriptorTypeID			type = 0;
-	OSType						shape = 0, create = 0;
 	DescriptorKeyIDArray		array = { NULLID };
 	int32						flags = 0;
-	OSErr						gotErr = noErr, stickyError = noErr;
+	OSErr						stickyError = noErr;
 	Boolean						returnValue = true;
 	int32						storeValue;
-	DescriptorEnumID			ostypeStoreValue;
 	Boolean						boolStoreValue;
 
 	if (DescriptorAvailable(NULL))
@@ -73,32 +64,12 @@ Boolean ReadScriptParamsOnWrite(GPtr globals)
 			{
 				switch (key)
 				{
-					case keyWebPlossless:
-							PIGetBool(token, &boolStoreValue);
-							gOptions.lossless = boolStoreValue;
-							break;
-
-					case keyWebPquality:
+					case keypngquantquality:
 							PIGetInt(token, &storeValue);
 							gOptions.quality = storeValue;
 							break;
-
-					case keyWebPalpha:
-							PIGetEnum(token, &ostypeStoreValue);
-							gOptions.alpha = KeyToAlpha(ostypeStoreValue);
-							break;
-
-					case keyWebPlossyAlpha:
-							PIGetBool(token, &boolStoreValue);
-							gOptions.lossy_alpha = boolStoreValue;
-							break;
-
-					case keyWebPalphaCleanup:
-							PIGetBool(token, &boolStoreValue);
-							gOptions.alpha_cleanup = boolStoreValue;
-							break;
-
-					case keyWebPsaveMetadata:
+				
+					case keypngquantsaveMetadata:
 							PIGetBool(token, &boolStoreValue);
 							gOptions.save_metadata = boolStoreValue;
 							break;
@@ -127,14 +98,6 @@ Boolean ReadScriptParamsOnWrite(GPtr globals)
 
 
 
-static OSType AlphaToKey(WebP_Alpha alpha)
-{
-	return	(alpha == WEBP_ALPHA_NONE)			? alphaChannelNone :
-			(alpha == WEBP_ALPHA_TRANSPARENCY)	? alphaChannelTransparency :
-			(alpha == WEBP_ALPHA_CHANNEL)		? alphaChannelChannel :
-			alphaChannelTransparency;
-}
-
 OSErr WriteScriptParamsOnWrite(GPtr globals)
 {
 	PIWriteDescriptor			token = nil;
@@ -145,27 +108,7 @@ OSErr WriteScriptParamsOnWrite(GPtr globals)
 		token = OpenWriter();
 		if (token)
 		{
-			// write keys here
-			PIPutBool(token, keyWebPlossless, gOptions.lossless);
-
-			if(!gOptions.lossless)
-			{
-				PIPutInt(token, keyWebPquality, gOptions.quality);
-			}
-
-			PIPutEnum(token, keyWebPalpha, typeAlphaChannel, AlphaToKey(gOptions.alpha));
-
-			if(gOptions.alpha != WEBP_ALPHA_NONE)
-			{
-				PIPutBool(token, keyWebPlossyAlpha, gOptions.lossy_alpha);
-
-				if(gOptions.alpha == WEBP_ALPHA_TRANSPARENCY)
-				{
-					PIPutBool(token, keyWebPalphaCleanup, gOptions.alpha_cleanup);
-				}
-			}
-
-			PIPutBool(token, keyWebPsaveMetadata, gOptions.save_metadata);
+			PIPutBool(token, keypngquantsaveMetadata, gOptions.save_metadata);
 
 			gotErr = CloseWriter(&token); /* closes and sets dialog optional */
 			/* done.  Now pass handle on to Photoshop */

@@ -30,14 +30,15 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
-#ifndef __WebP_Terminology_H__
-#define __WebP_Terminology_H__
+#ifndef __pngquant_Terminology_H__
+#define __pngquant_Terminology_H__
 
 //-------------------------------------------------------------------------------
 //	Options
@@ -47,18 +48,8 @@
 //	Definitions -- Scripting keys
 //-------------------------------------------------------------------------------
 
-#define keyWebPlossless			'WebL'
-#define keyWebPquality			'WebQ'
-#define keyWebPalpha			'WebA'
-#define keyWebPlossyAlpha		'WelA'
-#define keyWebPalphaCleanup		'WebC'
-#define keyWebPsaveMetadata		'WebM'
-
-#define typeAlphaChannel		'alfT'
-
-#define alphaChannelNone		'alfN'
-#define alphaChannelTransparency 'alfT'
-#define alphaChannelChannel		'alfC'
+#define keypngquantquality			'pgQq'
+#define keypngquantsaveMetadata		'pgQm'
 
 
-#endif // __WebP_Terminology_H__
+#endif // __pngquant_Terminology_H__

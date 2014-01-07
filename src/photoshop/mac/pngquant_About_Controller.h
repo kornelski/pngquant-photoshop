@@ -30,24 +30,24 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
 #import <Cocoa/Cocoa.h>
 
-@interface WebP_About_Controller : NSObject {
-	IBOutlet NSTextField *pluginVersionString;
-	IBOutlet NSTextField *webpVersionString;
+@interface pngquant_About_Controller : NSObject<NSWindowDelegate> {
+	IBOutlet NSTextField *pngquantVersionString;
+    IBOutlet NSTextView *about;
 	IBOutlet NSWindow *theWindow;
 }
 
-- (id)init:(const char *)pluginVersion
-	webpVersion:(const char *)webpVersion;
+- (id)init:(const char *)pngquantVersion;
 
-- (IBAction)clickedOK:(id)sender;
+- (void)windowWillClose:(NSNotification *)notification;
 
 - (NSWindow *)getWindow;
 

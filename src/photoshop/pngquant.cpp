@@ -30,30 +30,27 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
-#include "WebP.h"
+#include "pngquant.h"
 
-#include "WebP_version.h"
-#include "WebP_UI.h"
-
-
-#include "webp/demux.h"
-#include "webp/mux.h"
-#include "webp/decode.h"
-#include "webp/encode.h"
+#include "pngquant_version.h"
+#include "pngquant_UI.h"
+#include "libimagequant.h"
 
 #include <stdio.h>
 #include <assert.h>
 
+#include "lodepng.h"
+#include <stdlib.h>
+
+
 // globals needed by a bunch of Photoshop SDK routines
-#ifdef __PIWin__
-HINSTANCE hDllInstance = NULL;
-#endif
 
 SPBasicSuite * sSPBasic = NULL;
 SPPluginRef gPlugInRef = NULL;
@@ -61,25 +58,10 @@ SPPluginRef gPlugInRef = NULL;
 
 static void DoAbout(AboutRecordPtr aboutP)
 {
-#ifdef __PIMac__
-	const char * const plugHndl = "com.fnordware.Photoshop.WebP";
+	const char * const plugHndl = "org.pngquant.photoshop";
 	const void *hwnd = aboutP;
-#else
-	const char * const plugHndl = NULL;
-	HWND hwnd = (HWND)((PlatformData *)aboutP->platformData)->hwnd;
-#endif
 
-	const int version = WebPGetEncoderVersion();
-
-	char version_string[32];
-
-	sprintf(version_string, "libwebp version %d.%d.%d",
-				(version >> 16) & 0xff,
-				(version >> 8) & 0xff,
-				(version >> 0) & 0xff);
-
-
-	WebP_About(WebP_Build_Complete_Manual, version_string, plugHndl, hwnd);
+	pngquant_About("Plug-in " pngquant_Version_String ", libpngquant 2.0.1.", plugHndl, hwnd);
 }
 
 #pragma mark-
@@ -92,17 +74,9 @@ static void InitGlobals(Ptr globalPtr)
 
 	globals->fileH				= NULL;
 
-	memset(&gInOptions, 0, sizeof(gInOptions));
 	memset(&gOptions, 0, sizeof(gOptions));
 
-	gInOptions.alpha			= WEBP_ALPHA_TRANSPARENCY;
-	gInOptions.mult				= FALSE;
-
 	gOptions.quality			= 50;
-	gOptions.lossless			= TRUE;
-	gOptions.alpha				= WEBP_ALPHA_TRANSPARENCY;
-	gOptions.lossy_alpha		= FALSE;
-	gOptions.alpha_cleanup		= TRUE;
 	gOptions.save_metadata		= TRUE;
 }
 
@@ -209,149 +183,6 @@ static void myFreeBuffer(GPtr globals, const BufferID inBufferID)
 #pragma mark-
 
 
-static size_t my_fread(GPtr globals, void * buf, size_t len)
-{
-#ifdef __PIMac__
-	ByteCount count = len;
-
-	OSErr result = FSReadFork(gStuff->dataFork, fsAtMark, 0, count, buf, &count);
-
-	return count;
-#else
-	DWORD count = len, bytes_read = 0;
-
-	BOOL result = ReadFile((HANDLE)gStuff->dataFork, (LPVOID)buf, count, &bytes_read, NULL);
-
-	return bytes_read;
-#endif
-}
-
-static bool my_fwrite(GPtr globals, const void * buf, size_t len)
-{
-#ifdef __PIMac__
-	ByteCount count = len;
-
-	OSErr result = FSWriteFork(gStuff->dataFork, fsAtMark, 0, count, (const void *)buf, &count);
-
-	return (result == noErr && count == len);
-#else
-	DWORD count = len, out = 0;
-
-	BOOL result = WriteFile((HANDLE)gStuff->dataFork, (LPVOID)buf, count, &out, NULL);
-
-	return (result && out == count);
-#endif
-}
-
-static int my_fseek(GPtr globals, long offset, int whence)
-{
-#ifdef __PIMac__
-	UInt16 positionMode = ( whence == SEEK_SET ? fsFromStart :
-							whence == SEEK_CUR ? fsFromMark :
-							whence == SEEK_END ? fsFromLEOF :
-							fsFromMark );
-
-	OSErr result = FSSetForkPosition(gStuff->dataFork, positionMode, offset);
-
-	return result;
-#else
-	LARGE_INTEGER lpos;
-
-	lpos.QuadPart = offset;
-
-	DWORD method = ( whence == SEEK_SET ? FILE_BEGIN :
-						whence == SEEK_CUR ? FILE_CURRENT :
-						whence == SEEK_END ? FILE_END :
-						FILE_CURRENT );
-
-#if _MSC_VER < 1300
-	DWORD pos = SetFilePointer((HANDLE)gStuff->dataFork, lpos.u.LowPart, &lpos.u.HighPart, method);
-
-	BOOL result = (pos != 0xFFFFFFFF || NO_ERROR == GetLastError());
-#else
-	BOOL result = SetFilePointerEx((HANDLE)gStuff->dataFork, lpos, NULL, method);
-#endif
-
-	return (result ? 0 : 1);
-#endif
-}
-
-static long my_ftell(GPtr globals)
-{
-#ifdef __PIMac__
-	SInt64 lpos;
-
-	OSErr result = FSGetForkPosition(gStuff->dataFork, &lpos);
-
-	return lpos;
-#else
-	LARGE_INTEGER lpos, zero;
-
-	zero.QuadPart = 0;
-
-	BOOL result = SetFilePointerEx((HANDLE)gStuff->dataFork, zero, &lpos, FILE_CURRENT);
-
-	return lpos.QuadPart;
-#endif
-}
-
-static long my_GetFileSize(GPtr globals)
-{
-#ifdef __PIMac__
-	SInt64 fork_size = 0;
-
-	OSErr result = FSGetForkSize(gStuff->dataFork, &fork_size);
-
-	return fork_size;
-#else
-	return GetFileSize((HANDLE)gStuff->dataFork, NULL);
-#endif
-}
-
-
-#pragma mark-
-
-
-static void DoFilterFile(GPtr globals)
-{
-	// copied from ParseRiff()
-#define RIFF_HEADER_SIZE 12
-#define TAG_SIZE 4
-
-	uint8_t buf[RIFF_HEADER_SIZE];
-
-	my_fseek(globals, 0, SEEK_SET);
-
-	if(RIFF_HEADER_SIZE == my_fread(globals, buf, RIFF_HEADER_SIZE))
-	{
-		if(!memcmp(buf, "RIFF", TAG_SIZE) && !memcmp(buf + 8, "WEBP", TAG_SIZE))
-		{
-			// we're fine then
-		}
-		else
-			gResult = formatCannotRead;
-	}
-	else
-		gResult = formatCannotRead;
-}
-
-
-// Additional parameter functions
-//   These transfer settings to and from gStuff->revertInfo
-
-static void TwiddleOptions(WebP_inData *options)
-{
-#ifndef __PIMacPPC__
-	// none
-#endif
-}
-
-static void TwiddleOptions(WebP_outData *options)
-{
-#ifndef __PIMacPPC__
-	// none
-#endif
-}
 
 template <typename T>
 static bool ReadParams(GPtr globals, T *options)
@@ -364,12 +195,7 @@ static bool ReadParams(GPtr globals, T *options)
 		{
 			T *flat_options = (T *)myLockHandle(globals, gStuff->revertInfo);
 
-			// flatten and copy
-			TwiddleOptions(flat_options);
-
 			memcpy((char*)options, (char*)flat_options, sizeof(T) );
-
-			TwiddleOptions(flat_options);
 
 			myUnlockHandle(globals, gStuff->revertInfo);
 
@@ -399,202 +225,12 @@ static void WriteParams(GPtr globals, T *options)
 
 		flat_options = (T *)myLockHandle(globals, gStuff->revertInfo);
 
-		// flatten and copy
-		TwiddleOptions(flat_options);
-
 		memcpy((char*)flat_options, (char*)options, sizeof(T) );
-
-		TwiddleOptions(flat_options);
 
 
 		myUnlockHandle(globals, gStuff->revertInfo);
 	}
 }
-
-
-static void DoReadPrepare(GPtr globals)
-{
-	gStuff->maxData = 0;
-}
-
-
-static void DoReadStart(GPtr globals)
-{
-	bool reverting = ReadParams(globals, &gInOptions);
-
-	if(gResult == noErr)
-	{
-		assert(globals->fileH == NULL);
-
-		long file_size = my_GetFileSize(globals);
-
-		globals->fileH = myNewHandle(globals, file_size);
-
-		if(globals->fileH)
-		{
-			Ptr buf = myLockHandle(globals, globals->fileH);
-
-			my_fseek(globals, 0, SEEK_SET);
-
-			if(file_size == my_fread(globals, buf, file_size))
-			{
-				WebPData webp_data = { (const uint8_t *)buf, file_size };
-
-				WebPDemuxer *demux = WebPDemux(&webp_data);
-
-				if(demux)
-				{
-					uint32_t width = WebPDemuxGetI(demux, WEBP_FF_CANVAS_WIDTH);
-					uint32_t height = WebPDemuxGetI(demux, WEBP_FF_CANVAS_HEIGHT);
-					uint32_t flags = WebPDemuxGetI(demux, WEBP_FF_FORMAT_FLAGS);
-
-					bool has_alpha = (flags & ALPHA_FLAG);
-
-					// check the bitstream to see if we REALLY have an alpha
-					// (lossless images are always compressed with an alpha)
-					WebPIterator iter;
-
-					if(has_alpha && WebPDemuxGetFrame(demux, 0, &iter) )
-					{
-						WebPBitstreamFeatures features;
-
-						VP8StatusCode status = WebPGetFeatures(iter.fragment.bytes, iter.fragment.size, &features);
-
-						has_alpha = features.has_alpha;
-
-						WebPDemuxReleaseIterator(&iter);
-					}
-
-					assert(WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT) >= 1);
-
-
-					if(!reverting)
-					{
-						WebP_InUI_Data params;
-
-					#ifdef __PIMac__
-						const char * const plugHndl = "com.fnordware.Photoshop.WebP";
-						const void *hwnd = globals;
-					#else
-						const char *const plugHndl = NULL;
-						HWND hwnd = (HWND)((PlatformData *)gStuff->platformData)->hwnd;
-					#endif
-
-						// WebP_InUI is responsible for not popping a dialog if the user
-						// didn't request it.  It still has to set the read settings from preferences though.
-						bool result = WebP_InUI(&params, has_alpha, plugHndl, hwnd);
-
-						if(result)
-						{
-							gInOptions.alpha = params.alpha;
-							gInOptions.mult = params.mult;
-
-							WriteParams(globals, &gInOptions);
-						}
-						else
-							gResult = userCanceledErr;
-					}
-
-
-					if(gResult == noErr)
-					{
-						gStuff->imageMode = plugInModeRGBColor;
-						gStuff->depth = 8;
-
-						gStuff->imageSize.h = gStuff->imageSize32.h = width;
-						gStuff->imageSize.v = gStuff->imageSize32.v = height;
-
-						gStuff->planes = (has_alpha ? 4 : 3);
-
-						if(gInOptions.alpha == WEBP_ALPHA_TRANSPARENCY && gStuff->planes == 4)
-						{
-							gStuff->transparencyPlane = gStuff->planes - 1;
-							gStuff->transparencyMatting = 0;
-						}
-
-
-						WebPChunkIterator chunk_iter;
-
-						if(gStuff->canUseICCProfiles && (flags & ICCP_FLAG) && WebPDemuxGetChunk(demux, "ICCP", 1, &chunk_iter) )
-						{
-							gStuff->iCCprofileSize = chunk_iter.chunk.size;
-							gStuff->iCCprofileData = myNewHandle(globals, gStuff->iCCprofileSize);
-
-							if(gStuff->iCCprofileData)
-							{
-								Ptr iccP = myLockHandle(globals, gStuff->iCCprofileData);
-
-								memcpy(iccP, chunk_iter.chunk.bytes, gStuff->iCCprofileSize);
-
-								myUnlockHandle(globals, gStuff->iCCprofileData);
-							}
-
-							WebPDemuxReleaseChunkIterator(&chunk_iter);
-						}
-
-						if(gStuff->propertyProcs && PISetProp)
-						{
-							if( (flags & EXIF_FLAG) && WebPDemuxGetChunk(demux, "EXIF", 1, &chunk_iter) )
-							{
-								Handle exif_handle = myNewHandle(globals, chunk_iter.chunk.size);
-
-								if(exif_handle)
-								{
-									Ptr exifP = myLockHandle(globals, exif_handle);
-
-									memcpy(exifP, chunk_iter.chunk.bytes, chunk_iter.chunk.size);
-
-									myUnlockHandle(globals, exif_handle);
-
-									PISetProp(kPhotoshopSignature, propEXIFData, 0, NULL, exif_handle);
-								}
-
-								WebPDemuxReleaseChunkIterator(&chunk_iter);
-							}
-
-							if( (flags & XMP_FLAG) && WebPDemuxGetChunk(demux, "XMP ", 1, &chunk_iter) )
-							{
-								Handle xmp_handle = myNewHandle(globals, chunk_iter.chunk.size);
-
-								if(xmp_handle)
-								{
-									Ptr xmpP = myLockHandle(globals, xmp_handle);
-
-									memcpy(xmpP, chunk_iter.chunk.bytes, chunk_iter.chunk.size);
-
-									myUnlockHandle(globals, xmp_handle);
-
-									PISetProp(kPhotoshopSignature, propXMP, 0, NULL, xmp_handle);
-								}
-
-								WebPDemuxReleaseChunkIterator(&chunk_iter);
-							}
-						}
-					}
-
-					WebPDemuxDelete(demux);
-				}
-				else
-					gResult = formatCannotRead;
-			}
-			else
-				gResult = readErr;
-
-			myUnlockHandle(globals, globals->fileH);
-		}
-		else
-			gResult = memFullErr;
-	}
-
-
-	if(gResult != noErr && globals->fileH != NULL)
-	{
-		myDisposeHandle(globals, globals->fileH);
-
-		globals->fileH = NULL;
-	}
-}
-
 
 typedef struct {
 	unsigned8	r;
@@ -603,148 +239,11 @@ typedef struct {
 	unsigned8	a;
 } RGBApixel8;
 
-static void Premultiply(RGBApixel8 *buf, int64 len)
-{
-	while(len--)
-	{
-		if(buf->a != 255)
-		{
-			float mult = (float)buf->a / 255.f;
-
-			buf->r = ((float)buf->r * mult) + 0.5f;
-			buf->g = ((float)buf->g * mult) + 0.5f;
-			buf->b = ((float)buf->b * mult) + 0.5f;
-		}
-
-		buf++;
-	}
-}
-
-static void DoReadContinue(GPtr globals)
-{
-	if(globals->fileH)
-	{
-		size_t data_size = myGetHandleSize(globals, globals->fileH);
-
-		Ptr data = myLockHandle(globals, globals->fileH);
-
-
-		WebPData webp_data = { (const uint8_t *)data, data_size };
-
-		WebPDemuxer *demux = WebPDemux(&webp_data);
-
-		if(demux)
-		{
-			WebPIterator iter;
-
-			if( WebPDemuxGetFrame(demux, 0, &iter) )
-			{
-				WebPDecoderConfig config;
-				WebPInitDecoderConfig(&config);
-
-				config.options.use_threads = TRUE;
-
-				VP8StatusCode status = WebPGetFeatures(iter.fragment.bytes, iter.fragment.size, &config.input);
-
-				if(status == VP8_STATUS_OK)
-				{
-					WebPDecBuffer* const output_buffer = &config.output;
-
-					output_buffer->colorspace = (gStuff->planes == 4 ? MODE_RGBA : MODE_RGB);
-					output_buffer->width = gStuff->imageSize.h;
-					output_buffer->height = gStuff->imageSize.v;
-					output_buffer->is_external_memory = TRUE;
-
-					int32 rowbytes = sizeof(unsigned char) * gStuff->planes * gStuff->imageSize.h;
-					int32 buffer_size = rowbytes * gStuff->imageSize.v;
-
-					BufferID bufferID = 0;
-
-					gResult = myAllocateBuffer(globals, buffer_size, &bufferID);
-
-					if(gResult == noErr)
-					{
-						gStuff->data = myLockBuffer(globals, bufferID, TRUE);
-
-						WebPRGBABuffer *buf_info = &output_buffer->u.RGBA;
-
-						buf_info->rgba = (uint8_t *)gStuff->data;
-						buf_info->stride = rowbytes;
-						buf_info->size = buffer_size;
-
-
-						status = WebPDecode((const uint8_t *)iter.fragment.bytes, iter.fragment.size, &config);
-
-						if(status == VP8_STATUS_OK)
-						{
-							if(gStuff->planes == 4 && gInOptions.alpha == WEBP_ALPHA_CHANNEL && gInOptions.mult == TRUE)
-							{
-								Premultiply((RGBApixel8 *)gStuff->data, gStuff->imageSize.h * gStuff->imageSize.v);
-							}
-
-							gStuff->planeBytes = 1;
-							gStuff->colBytes = gStuff->planeBytes * gStuff->planes;
-							gStuff->rowBytes = rowbytes;
-
-							gStuff->loPlane = 0;
-							gStuff->hiPlane = gStuff->planes - 1;
-
-							gStuff->theRect.left = gStuff->theRect32.left = 0;
-							gStuff->theRect.right = gStuff->theRect32.right = gStuff->imageSize.h;
-
-							gStuff->theRect.top = gStuff->theRect32.top = 0;
-							gStuff->theRect.bottom = gStuff->theRect32.bottom = gStuff->imageSize.v;
-
-							gResult = AdvanceState();
-						}
-						else
-							gResult = formatCannotRead;
-
-
-						myFreeBuffer(globals, bufferID);
-					}
-				}
-
-				WebPDemuxReleaseIterator(&iter);
-			}
-			else
-				gResult = formatCannotRead;
-
-
-			WebPDemuxDelete(demux);
-		}
-		else
-			gResult = formatCannotRead;
-
-
-		myUnlockHandle(globals, globals->fileH);
-	}
-	else
-		gResult = formatBadParameters;
-
-
-	// very important!
-	gStuff->data = NULL;
-}
-
-
-static void DoReadFinish(GPtr globals)
-{
-	if(globals->fileH)
-	{
-		myDisposeHandle(globals, globals->fileH);
-
-		globals->fileH = NULL;
-	}
-}
-
 #pragma mark-
 
-static void DoOptionsPrepare(GPtr globals)
+static void DoNothing(GPtr globals)
 {
-	gStuff->maxData = 0;
 }
-
 
 static void DoOptionsStart(GPtr globals)
 {
@@ -764,35 +263,19 @@ static void DoOptionsStart(GPtr globals)
 		if(gStuff->documentInfo && gStuff->documentInfo->alphaChannels)
 			alpha_name = gStuff->documentInfo->alphaChannels->name;
 
+		pngquant_OutUI_Data params;
 
-		WebP_OutUI_Data params;
-
-		params.lossless			= gOptions.lossless;
 		params.quality			= gOptions.quality;
-		params.alpha			= (DialogAlpha)gOptions.alpha;
-		params.lossy_alpha		= gOptions.lossy_alpha;
-		params.alpha_cleanup	= gOptions.alpha_cleanup;
 		params.save_metadata	= gOptions.save_metadata;
 
-
-	#ifdef __PIMac__
-		const char * const plugHndl = "com.fnordware.Photoshop.WebP";
+		const char * const plugHndl = "org.pngquant.photoshop";
 		const void *hwnd = globals;
-	#else
-		const char *const plugHndl = NULL;
-		HWND hwnd = (HWND)((PlatformData *)gStuff->platformData)->hwnd;
-	#endif
 
-		bool result = WebP_OutUI(&params, have_transparency, alpha_name, plugHndl, hwnd);
-
+		bool result = pngquant_OutUI(&params, have_transparency, alpha_name, plugHndl, hwnd);
 
 		if(result)
 		{
-			gOptions.lossless		= params.lossless;
 			gOptions.quality		= params.quality;
-			gOptions.alpha			= params.alpha;
-			gOptions.lossy_alpha	= params.lossy_alpha;
-			gOptions.alpha_cleanup	= params.alpha_cleanup;
 			gOptions.save_metadata	= params.save_metadata;
 
 			WriteParams(globals, &gOptions);
@@ -804,25 +287,7 @@ static void DoOptionsStart(GPtr globals)
 	}
 }
 
-
-static void DoOptionsContinue(GPtr globals)
-{
-
-}
-
-
-static void DoOptionsFinish(GPtr globals)
-{
-
-}
-
 #pragma mark-
-
-static void DoEstimatePrepare(GPtr globals)
-{
-	gStuff->maxData = 0;
-}
-
 
 static void DoEstimateStart(GPtr globals)
 {
@@ -834,27 +299,10 @@ static void DoEstimateStart(GPtr globals)
 
 	int64 dataBytes = (int64)width * (int64)height * (int64)gStuff->planes * (int64)(gStuff->depth >> 3);
 
-
-#ifndef MIN
-#define MIN(A,B)			( (A) < (B) ? (A) : (B))
-#endif
-
-	gStuff->minDataBytes = MIN(dataBytes / 2, INT_MAX);
-	gStuff->maxDataBytes = MIN(dataBytes, INT_MAX);
+	gStuff->minDataBytes = dataBytes;
+	gStuff->maxDataBytes = dataBytes + 5000;
 
 	gStuff->data = NULL;
-}
-
-
-static void DoEstimateContinue(GPtr globals)
-{
-
-}
-
-
-static void DoEstimateFinish(GPtr globals)
-{
-
 }
 
 #pragma mark-
@@ -864,29 +312,46 @@ static void DoWritePrepare(GPtr globals)
 	gStuff->maxData = 0;
 }
 
-
-static int ProgressReport(int percent, const WebPPicture* const picture)
+static int progress;
+static int ProgressReport(int percent, GPtr globals)
 {
-	GPtr globals = (GPtr)picture->user_data;
+    if (gResult != noErr) return 0;
 
+    progress = percent;
 	PIUpdateProgress(percent, 100);
 
-	return (noErr == (gResult = TestAbort()));
+    gResult = AdvanceState();
+    if (gResult != noErr) return 0;
+
+    gResult = TestAbort();
+    if (gResult != noErr) return 0;
+
+    return 1;
 }
 
+static void mycallback(const liq_attr *a, const char *message, void* user_info) {
+    GPtr globals = (GPtr)user_info;
 
-static void AlphaCleanup(RGBApixel8 *buf, int64 len)
-{
-	while(len--)
-	{
-		if(buf->a == 0)
-		{
-			buf->r = buf->g = buf->b = 0;
-		}
+    PIUpdateProgress(progress++, 100);
+    AdvanceState();
 
-		buf++;
-	}
+    MyLog(message);
 }
+
+static void rgb_to_rgba_callback(liq_color row_out[], int row_index, int width, void *user_info) {
+    FormatRecordPtr g = (FormatRecordPtr)user_info;
+
+    unsigned char *rgb_row = ((unsigned char *)g->data) + g->rowBytes * row_index;
+
+    for(int i=0; i < width; i++) {
+        row_out[i].r = rgb_row[i*3];
+        row_out[i].g = rgb_row[i*3+1];
+        row_out[i].b = rgb_row[i*3+2];
+        row_out[i].a = 255;
+    }
+}
+
+static BufferID bufferID = 0;
 
 static void DoWriteStart(GPtr globals)
 {
@@ -897,22 +362,16 @@ static void DoWriteStart(GPtr globals)
 	assert(gStuff->depth == 8);
 	assert(gStuff->planes >= 3);
 
-
 	bool have_transparency = (gStuff->planes >= 4);
 	bool have_alpha_channel = (gStuff->channelPortProcs && gStuff->documentInfo && gStuff->documentInfo->alphaChannels);
 
-	bool use_transparency = (have_transparency && gOptions.alpha == WEBP_ALPHA_TRANSPARENCY);
-	bool use_alpha_channel = (have_alpha_channel && gOptions.alpha == WEBP_ALPHA_CHANNEL);
-
-	bool use_alpha = (use_transparency || use_alpha_channel);
-
+	bool use_alpha = (have_transparency || have_alpha_channel);
 
 	const int width = (gStuff->PluginUsing32BitCoordinates ? gStuff->imageSize32.h : gStuff->imageSize.h);
 	const int height = (gStuff->PluginUsing32BitCoordinates ? gStuff->imageSize32.v : gStuff->imageSize.v);
 
-
 	gStuff->loPlane = 0;
-	gStuff->hiPlane = (use_transparency ? 3 : 2);
+	gStuff->hiPlane = (have_transparency ? 3 : 2);
 	gStuff->colBytes = sizeof(unsigned char) * (use_alpha ? 4 : 3);
 	gStuff->rowBytes = gStuff->colBytes * width;
 	gStuff->planeBytes = sizeof(unsigned char);
@@ -922,12 +381,13 @@ static void DoWriteStart(GPtr globals)
 	gStuff->theRect.top = gStuff->theRect32.top = 0;
 	gStuff->theRect.bottom = gStuff->theRect32.bottom = height;
 
+    progress=0;
 
 	ReadPixelsProc ReadProc = NULL;
 	ReadChannelDesc *alpha_channel = NULL;
 
 	// ReadProc being non-null means we're going to get the channel from the channels palette
-	if(use_alpha && gOptions.alpha == WEBP_ALPHA_CHANNEL &&
+	if(use_alpha &&
 		gStuff->channelPortProcs && gStuff->documentInfo && gStuff->documentInfo->alphaChannels)
 	{
 		ReadProc = gStuff->channelPortProcs->readPixelsProc;
@@ -938,7 +398,7 @@ static void DoWriteStart(GPtr globals)
 
 	int32 buffer_size = gStuff->rowBytes * height;
 
-	BufferID bufferID = 0;
+	bufferID = 0;
 
 	gResult = myAllocateBuffer(globals, buffer_size, &bufferID);
 
@@ -946,8 +406,9 @@ static void DoWriteStart(GPtr globals)
 	{
 		gStuff->data = myLockBuffer(globals, bufferID, TRUE);
 
-		gResult = AdvanceState();
+        ProgressReport(1, globals);
 
+		gResult = AdvanceState();
 
 		if(gResult == noErr && ReadProc)
 		{
@@ -958,161 +419,87 @@ static void DoWriteStart(GPtr globals)
 
 			gResult = ReadProc(alpha_channel->port, &scaling, &writeRect, &memDesc, &wroteRect);
 		}
-
-		if(gResult == noErr && use_transparency && gOptions.alpha_cleanup)
-		{
-			// could use WebPCleanupTransparentArea(), but will just do this myself
-			AlphaCleanup((RGBApixel8 *)gStuff->data, width * height);
-		}
-
-
-		if(gResult == noErr)
-		{
-			WebPMux *mux = WebPMuxNew();
-
-			if(mux)
-			{
-				WebPPicture picture;
-				WebPPictureInit(&picture);
-
-				picture.width = width;
-				picture.height = height;
-				picture.use_argb = TRUE;
-
-				int ok = use_alpha ? WebPPictureImportRGBA(&picture, (const uint8_t *)gStuff->data, gStuff->rowBytes) :
-										WebPPictureImportRGB(&picture, (const uint8_t *)gStuff->data, gStuff->rowBytes);
-
-				if(ok)
-				{
-					WebPMemoryWriter memory_writer;
-					WebPMemoryWriterInit(&memory_writer);
-
-					WebPConfig config;
-					WebPConfigInit(&config);
-
-					config.thread_level = TRUE;
-					config.lossless = gOptions.lossless;
-					config.quality = gOptions.quality;
-					config.method = 6;
-
-					if(use_alpha && !gOptions.lossless && gOptions.lossy_alpha)
-						config.alpha_quality = gOptions.quality;
-
-					picture.progress_hook = ProgressReport;
-					picture.user_data = globals;
-					picture.writer = WebPMemoryWrite;
-					picture.custom_ptr = &memory_writer;
-
-					int success = WebPEncode(&config, &picture);
-
-					if(success && gResult == noErr)
-					{
-						WebPData image_data = { memory_writer.mem, memory_writer.size };
-
-						WebPMuxError img_err = WebPMuxSetImage(mux, &image_data, FALSE);
-
-						if(img_err == WEBP_MUX_OK)
-						{
-							if(gOptions.save_metadata)
-							{
-								if(gStuff->canUseICCProfiles && (gStuff->iCCprofileSize > 0) && (gStuff->iCCprofileData != NULL))
-								{
-									WebPData chunk_data;
-
-									chunk_data.bytes = (const uint8_t *)myLockHandle(globals, gStuff->iCCprofileData);
-									chunk_data.size = myGetHandleSize(globals, gStuff->iCCprofileData);
-
-									WebPMuxError chunk_err = WebPMuxSetChunk(mux, "ICCP", &chunk_data, TRUE);
-
-									myUnlockHandle(globals, gStuff->iCCprofileData);
-								}
-
-								if(gStuff->propertyProcs && PIGetProp)
-								{
-									intptr_t simp;
-
-
-									Handle exif_handle = NULL;
-
-									PIGetProp(kPhotoshopSignature, propEXIFData, 0, &simp, &exif_handle);
-
-									if(exif_handle)
-									{
-										WebPData chunk_data;
-
-										chunk_data.bytes = (const uint8_t *)myLockHandle(globals, exif_handle);
-										chunk_data.size = myGetHandleSize(globals, exif_handle);
-
-										WebPMuxError chunk_err = WebPMuxSetChunk(mux, "EXIF", &chunk_data, TRUE);
-
-										myDisposeHandle(globals, exif_handle);
-									}
-
-
-									Handle xmp_handle = NULL;
-
-									PIGetProp(kPhotoshopSignature, propXMP, 0, &simp, &xmp_handle);
-
-									if(xmp_handle)
-									{
-										WebPData chunk_data;
-
-										chunk_data.bytes = (const uint8_t *)myLockHandle(globals, xmp_handle);
-										chunk_data.size = myGetHandleSize(globals, xmp_handle);
-
-										WebPMuxError chunk_err = WebPMuxSetChunk(mux, "XMP ", &chunk_data, TRUE);
-
-										myDisposeHandle(globals, xmp_handle);
-									}
-								}
-							}
-
-							// assemble and write the file
-							WebPData output_data;
-
-							WebPMuxError err = WebPMuxAssemble(mux, &output_data);
-
-							if(err == WEBP_MUX_OK)
-							{
-								bool ok = my_fwrite(globals, output_data.bytes, output_data.size);
-
-								WebPDataClear(&output_data);
-
-								if(!ok)
-									gResult = writErr; // or maybe dskFulErr
-							}
-							else
-								gResult = formatBadParameters;
-						}
-						else
-							gResult = formatBadParameters;
-					}
-					else if(gResult == noErr)
-					{
-						gResult = formatBadParameters;
-					}
-
-					if(memory_writer.mem)
-						free(memory_writer.mem);
-				}
-
-				WebPMuxDelete(mux);
-			}
-			else
-				gResult = formatBadParameters;
-		}
-
-		myFreeBuffer(globals, bufferID);
-	}
-
-	// muy importante
-	gStuff->data = NULL;
+    }
 }
 
 
 static void DoWriteContinue(GPtr globals)
 {
+    liq_attr *attr = liq_attr_create();
+    liq_set_log_callback(attr, mycallback, (void*)globals);
 
+    const int width = (gStuff->PluginUsing32BitCoordinates ? gStuff->imageSize32.h : gStuff->imageSize.h);
+	const int height = (gStuff->PluginUsing32BitCoordinates ? gStuff->imageSize32.v : gStuff->imageSize.v);
+
+    if (width * height > 1024*1024) {
+        liq_set_speed(attr, 5);
+    } else if (width * height < 128*128) {
+        liq_set_speed(attr, 2);
+        liq_set_quality(attr, 0, 95);
+    }
+
+    liq_image *img;
+    if (gStuff->planes == 4) {
+        img = liq_image_create_rgba(attr, gStuff->data, width, height, 0);
+    } else {
+        img = liq_image_create_custom(attr, rgb_to_rgba_callback, gStuff, width, height, 0);
+    }
+
+    ProgressReport(2, globals);
+
+    liq_result *res = liq_quantize_image(attr, img);
+
+    size_t outbuf_size = width*height;
+    unsigned char *outbuf = (unsigned char *)malloc(outbuf_size);
+
+    liq_set_dithering_level(res, 1.0f);
+
+    if (ProgressReport(50, globals)) liq_write_remapped_image(res, img, outbuf, outbuf_size);
+
+    ProgressReport(80, globals);
+
+    liq_image_destroy(img);
+
+    const liq_palette *palette = liq_get_palette(res);
+
+    LodePNGState state;
+    lodepng_state_init(&state);
+
+    state.info_raw.colortype = LCT_PALETTE;
+    state.info_raw.bitdepth = 8;
+    state.info_png.color.colortype = LCT_PALETTE;
+    state.info_png.color.bitdepth = palette->count <= 16 ? 4 : 8;
+    state.encoder.auto_convert = LAC_NO;
+
+    for(int i=0; i < palette->count; i++) {
+        lodepng_palette_add(&state.info_png.color, palette->entries[i].r, palette->entries[i].g, palette->entries[i].b, palette->entries[i].a);
+        lodepng_palette_add(&state.info_raw, palette->entries[i].r, palette->entries[i].g, palette->entries[i].b, palette->entries[i].a);
+    }
+
+    unsigned char *compressed = NULL;
+    size_t compressed_size = 0;
+    lodepng_encode(&compressed, &compressed_size, outbuf, width, height, &state);
+
+    free(outbuf);
+    liq_result_destroy(res);
+
+    if (ProgressReport(95, globals)) {
+        ByteCount count = compressed_size;
+        OSErr result = FSWriteFork(gStuff->dataFork, fsAtMark, 0, count, (const void *)compressed, &count);
+
+        if (result != noErr || count != compressed_size) {
+            gResult = formatBadParameters;
+        }
+    }
+    free(compressed);
+
+    liq_attr_destroy(attr);
+
+    ProgressReport(100, globals);
+
+    myFreeBuffer(globals, bufferID);
+    gStuff->data = NULL;
+    MyLog("Freed");
 }
 
 
@@ -1121,7 +508,6 @@ static void DoWriteFinish(GPtr globals)
 	if(gStuff->hostSig != 'FXTC')
 		WriteScriptParamsOnWrite(globals);
 }
-
 
 #pragma mark-
 
@@ -1135,11 +521,6 @@ DLLExport MACPASCAL void PluginMain(const short selector,
 	{
 		sSPBasic = ((AboutRecordPtr)formatParamBlock)->sSPBasic;
 
-	#ifdef __PIWin__
-		if(hDllInstance == NULL)
-			hDllInstance = GetDLLInstance((SPPluginRef)((AboutRecordPtr)formatParamBlock)->plugInRef);
-	#endif
-
 		DoAbout((AboutRecordPtr)formatParamBlock);
 	}
 	else
@@ -1148,37 +529,29 @@ DLLExport MACPASCAL void PluginMain(const short selector,
 
 		gPlugInRef = (SPPluginRef)formatParamBlock->plugInRef;
 
-	#ifdef __PIWin__
-		if(hDllInstance == NULL)
-			hDllInstance = GetDLLInstance((SPPluginRef)formatParamBlock->plugInRef);
-	#endif
-
-
 	 	static const FProc routineForSelector [] =
 		{
 			/* formatSelectorAbout  				DoAbout, */
 
-			/* formatSelectorReadPrepare */			DoReadPrepare,
-			/* formatSelectorReadStart */			DoReadStart,
-			/* formatSelectorReadContinue */		DoReadContinue,
-			/* formatSelectorReadFinish */			DoReadFinish,
+			/* formatSelectorReadPrepare */			NULL,
+			/* formatSelectorReadStart */			NULL,
+			/* formatSelectorReadContinue */		NULL,
+			/* formatSelectorReadFinish */			NULL,
 
-			/* formatSelectorOptionsPrepare */		DoOptionsPrepare,
-			/* formatSelectorOptionsStart */		DoOptionsStart,
-			/* formatSelectorOptionsContinue */		DoOptionsContinue,
-			/* formatSelectorOptionsFinish */		DoOptionsFinish,
+			/* formatSelectorOptionsPrepare */		DoNothing,
+			/* formatSelectorOptionsStart */		DoNothing,
+			/* formatSelectorOptionsContinue */		NULL,
+			/* formatSelectorOptionsFinish */		DoNothing,
 
-			/* formatSelectorEstimatePrepare */		DoEstimatePrepare,
+			/* formatSelectorEstimatePrepare */		DoNothing,
 			/* formatSelectorEstimateStart */		DoEstimateStart,
-			/* formatSelectorEstimateContinue */	DoEstimateContinue,
-			/* formatSelectorEstimateFinish */		DoEstimateFinish,
+			/* formatSelectorEstimateContinue */	DoNothing,
+			/* formatSelectorEstimateFinish */		DoNothing,
 
 			/* formatSelectorWritePrepare */		DoWritePrepare,
 			/* formatSelectorWriteStart */			DoWriteStart,
 			/* formatSelectorWriteContinue */		DoWriteContinue,
 			/* formatSelectorWriteFinish */			DoWriteFinish,
-
-			/* formatSelectorFilterFile */			DoFilterFile
 		};
 
 		Ptr globalPtr = NULL;		// Pointer for global structure
@@ -1189,14 +562,14 @@ DLLExport MACPASCAL void PluginMain(const short selector,
 		{
 			bool must_init = false;
 
-			if(*data == NULL)
+			if(!*data)
 			{
 				*data = (intptr_t)formatParamBlock->handleProcs->newProc(sizeof(Globals));
 
 				must_init = true;
 			}
 
-			if(*data != NULL)
+			if(*data)
 			{
 				globalPtr = formatParamBlock->handleProcs->lockProc((Handle)*data, TRUE);
 
@@ -1240,7 +613,7 @@ DLLExport MACPASCAL void PluginMain(const short selector,
 
 
 		// Dispatch selector
-		if (selector > formatSelectorAbout && selector <= formatSelectorFilterFile)
+		if (selector > formatSelectorAbout && selector <= formatSelectorWriteFinish && routineForSelector[selector-1])
 			(routineForSelector[selector-1])(globals); // dispatch using jump table
 		else
 			gResult = formatBadParameters;
@@ -1257,7 +630,5 @@ DLLExport MACPASCAL void PluginMain(const short selector,
 				PIUnlockHandle((Handle)*data);
 			}
 		}
-
-
 	} // about selector special
 }

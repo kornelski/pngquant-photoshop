@@ -30,14 +30,15 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
-#ifndef __WebP_Photoshop_H__
-#define __WebP_Photoshop_H__
+#ifndef __pngquant_Photoshop_H__
+#define __pngquant_Photoshop_H__
 
 
 #include "PIDefines.h"
@@ -45,30 +46,11 @@
 #include "PIUtilities.h"
 #include "PIProperties.h"
 
-
-enum {
-	WEBP_ALPHA_NONE = 0,
-	WEBP_ALPHA_TRANSPARENCY,
-	WEBP_ALPHA_CHANNEL
-};
-typedef uint8 WebP_Alpha;
-
 typedef struct {
-	WebP_Alpha	alpha;
-	Boolean		mult;
-
-} WebP_inData;
-
-typedef struct {
-	Boolean			lossless;
 	uint8			quality;
-	WebP_Alpha		alpha;
-	Boolean			lossy_alpha;
-	Boolean			alpha_cleanup;
 	Boolean			save_metadata;
 	uint8			reserved[250];
-
-} WebP_outData;
+} pngquant_outData;
 
 
 typedef struct Globals
@@ -79,8 +61,7 @@ typedef struct Globals
 
 	Handle				fileH;				// stores the entire binary file
 
-	WebP_inData			in_options;
-	WebP_outData		options;
+	pngquant_outData		options;
 
 } Globals, *GPtr, **GHdl;				// *GPtr = global pointer; **GHdl = global handle
 
@@ -95,10 +76,10 @@ typedef void (* FProc)(GPtr globals);
 //	Globals -- definitions and macros
 //-------------------------------------------------------------------------------
 
-#define gResult				(*(globals->result))
-#define gStuff				(globals->formatParamBlock)
+#define gResult			(*(globals->result))
+#define gStuff			(globals->formatParamBlock)
 
-#define gInOptions			(globals->in_options)
+#define gInOptions		(globals->in_options)
 #define gOptions			(globals->options)
 
 //-------------------------------------------------------------------------------
@@ -118,4 +99,4 @@ OSErr WriteScriptParamsOnWrite (GPtr globals);	// Write any scripting params.
 
 //-------------------------------------------------------------------------------
 
-#endif // __WebP_Photoshop_H__
+#endif // __pngquant_Photoshop_H__

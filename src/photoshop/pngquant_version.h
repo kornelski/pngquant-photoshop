@@ -30,24 +30,24 @@
 
 // ------------------------------------------------------------------------
 //
-// WebP Photoshop plug-in
+// pngquant Photoshop plug-in
 //
-// by Brendan Bolles <brendan@fnordware.com>
+// by Kornel Lesinski <kornel@pngquant.org>
+// based on code by Brendan Bolles <brendan@fnordware.com>
 //
 // ------------------------------------------------------------------------
 
-#ifndef __WebP_Version_H__
-#define __WebP_Version_H__
+#ifndef __pngquant_Version_H__
+#define __pngquant_Version_H__
 
-#define WebP_Major_Version 0
-#define WebP_Minor_Version 5
-#define WebP_Version_String "0.5b4"
-#define WebP_Build_Date __DATE__
-#define WebP_Build_Date_Manual "18 July 2013"
-#define WebP_Build_Complete_Manual "v0.5b4 - " WebP_Build_Date
-#define WebP_Copyright_Year "2013"
-#define WebP_Build_Year "2013"
+#define pngquant_Major_Version 0
+#define pngquant_Minor_Version 1
+#define pngquant_Version_String "0.2b"
+#define pngquant_Build_Date __DATE__
+#define pngquant_Build_Date_Manual "6 Jan 2014"
+#define pngquant_Copyright_Year "2014"
+#define pngquant_Build_Year pngquant_Copyright_Year
 
-#define WebP_Description "A file format module for writing WebP files in Adobe Photoshop."
+#define pngquant_Description "Smaller PNG files with alpha channel."
 
-#endif // __WebP_Version_H__
+#endif // __pngquant_Version_H__
